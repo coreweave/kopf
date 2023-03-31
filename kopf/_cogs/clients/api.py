@@ -1,5 +1,7 @@
 import asyncio
 import collections.abc
+import contextlib
+import functools
 import itertools
 import json
 import ssl
@@ -12,6 +14,40 @@ from kopf._cogs.aiokits import aiotasks
 from kopf._cogs.clients import auth, errors
 from kopf._cogs.configs import configuration
 from kopf._cogs.helpers import typedefs
+
+
+# Global concurrency limit set if networking.burst_concurrency is configured
+burst_limiter: Optional[asyncio.BoundedSemaphore] = None
+
+
+def limit_bursts(coro = None):
+    """Use the global burst limiter.
+
+    Can be used as a coroutine function decorator or in an async context
+    manager.
+    """
+
+    # TODO in python>=3.10, @contextlib.asynccontextmanager can simplify this
+    # function as both a decorator and async context manager.
+
+    if coro is None:
+        # Used as an async context manager
+        if burst_limiter is not None:
+            return burst_limiter
+        else:
+            return contextlib.nullcontext()
+
+    # Used as a decorator
+
+    @functools.wraps(coro)
+    async def wrapped(*args, **kwargs):
+        if burst_limiter is not None:
+            async with burst_limiter:
+                return await coro(*args, **kwargs)
+        else:
+            return await coro(*args, **kwargs)
+
+    return wrapped
 
 
 @auth.authenticated
@@ -98,6 +134,7 @@ async def request(
     raise RuntimeError("Broken retryable routine.")  # impossible, but needed for type-checking.
 
 
+@limit_bursts
 async def get(
         url: str,  # relative to the server/api root.
         *,
@@ -120,6 +157,7 @@ async def get(
         return await response.json()
 
 
+@limit_bursts
 async def post(
         url: str,  # relative to the server/api root.
         *,
@@ -142,6 +180,7 @@ async def post(
         return await response.json()
 
 
+@limit_bursts
 async def patch(
         url: str,  # relative to the server/api root.
         *,
@@ -164,6 +203,7 @@ async def patch(
         return await response.json()
 
 
+@limit_bursts
 async def delete(
         url: str,  # relative to the server/api root.
         *,
@@ -196,15 +236,23 @@ async def stream(
         stopper: Optional[aiotasks.Future] = None,
         logger: typedefs.Logger,
 ) -> AsyncIterator[Any]:
-    response = await request(
-        method='get',
-        url=url,
-        payload=payload,
-        headers=headers,
-        timeout=timeout,
-        settings=settings,
-        logger=logger,
-    )
+    async with limit_bursts():
+        # Streaming watchers run indefinitely so we cannot wait for them to
+        # close to release their inflight request concurrency seats. Kubernetes
+        # holds a seat for watchers throughout their initial burst of data, if
+        # any. Kopf always sends a resourceVersion parameter so the watch
+        # stream will nearly always have no initial content after successfully
+        # connecting. Therefore it is safe and consistent to release the
+        # concurrency seat after the response object is created below.
+        response = await request(
+            method='get',
+            url=url,
+            payload=payload,
+            headers=headers,
+            timeout=timeout,
+            settings=settings,
+            logger=logger,
+        )
     response_close_callback = lambda _: response.close()  # to remove the positional arg.
     if stopper is not None:
         stopper.add_done_callback(response_close_callback)

@@ -7,7 +7,7 @@ import warnings
 from typing import Collection, Coroutine, MutableSequence, Optional, Sequence
 
 from kopf._cogs.aiokits import aioadapters, aiobindings, aiotasks, aiotoggles, aiovalues
-from kopf._cogs.clients import auth
+from kopf._cogs.clients import api, auth
 from kopf._cogs.configs import configuration
 from kopf._cogs.helpers import versions
 from kopf._cogs.structs import credentials, ephemera, references, reviews
@@ -514,6 +514,11 @@ async def _startup_cleanup_activities(
     except asyncio.CancelledError:
         logger.warning("Startup activity is only partially executed due to cancellation.")
         raise
+
+    if settings.networking.burst_concurrency is not None:
+        api.burst_limiter = asyncio.BoundedSemaphore(settings.networking.burst_concurrency)
+    else:
+        api.burst_limiter = None
 
     # Notify the caller that we are ready to be executed. This unfreezes all the root tasks.
     started_flag.set()
