@@ -83,8 +83,7 @@ async def request(
                 timeout=timeout,
             )
             await errors.check_response(response)  # but do not parse it!
-
-        except (aiohttp.ClientConnectionError, errors.APIServerError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientConnectionError, errors.APIServerError, asyncio.TimeoutError, errors.APITooManyRequestsError) as e:
             if backoff is None:  # i.e. the last or the only attempt.
                 logger.error(f"Request attempt {idx} failed; escalating: {what} -> {e!r}")
                 raise
