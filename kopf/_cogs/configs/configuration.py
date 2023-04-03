@@ -352,6 +352,14 @@ class NetworkingSettings:
     For more information on the API errors retrying, see :doc:`api-retrying`.
     """
 
+    burst_concurrency: Optional[int] = None
+    """
+    Maximum number of unresolved requests that may exist concurrently.
+
+    A request is considered complete when the full body content is returned,
+    an error occurs, or when a streaming watcher receives all response headers.
+    """
+
 
 @dataclasses.dataclass
 class PersistenceSettings:
